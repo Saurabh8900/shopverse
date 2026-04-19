@@ -1,5 +1,73 @@
 import asyncHandler from 'express-async-handler';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+
+const generateToken = (id) => jwt.sign({ id }, process.env.JWT_SECRET || 'shopverse_secret_2024', { expiresIn: '7d' });
+
+// @POST /api/users/register
+export const register = asyncHandler(async (req, res) => {
+  const db = req.app.get('db');
+  const { name, email, password } = req.body;
+  
+  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+  if (existing) return res.status(400).json({ message: 'Email already registered' });
+  
+  const hashedPassword = bcrypt.hashSync(password, 10);
+  const result = db.prepare('INSERT INTO users (name, email, password) VALUES (?, ?, ?)').run(name, email, hashedPassword);
+  
+  const user = db.prepare('SELECT id, name, email, isAdmin FROM users WHERE id = ?').get(result.lastInsertRowid);
+  res.status(201).json({ ...user, token: generateToken(user.id) });
+});
+
+// @POST /api/users/login
+export const login = asyncHandler(async (req, res) => {
+  const db = req.app.get('db');
+  const { email, password } = req.body;
+  
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  if (!user || !bcrypt.compareSync(password, user.password)) {
+    return res.status(401).json({ message: 'Invalid credentials' });
+  }
+  
+  const { password: _, ...userWithoutPassword } = user;
+  res.json({ ...userWithoutPassword, token: generateToken(user.id) });
+});
+
+// @GET /api/users/profile
+export const getProfile = asyncHandler(async (req, res) => {
+  const db = req.app.get('db');
+  const userId = req.user.id;
+  
+  const user = db.prepare('SELECT id, name, email, isAdmin, createdAt FROM users WHERE id = ?').get(userId);
+  if (!user) return res.status(404).json({ message: 'User not found' });
+  
+  res.json(user);
+});
+
+// @PUT /api/users/profile
+export const updateProfile = asyncHandler(async (req, res) => {
+  const db = req.app.get('db');
+  const userId = req.user.id;
+  const { name } = req.body;
+  
+  if (name) {
+    db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name, userId);
+  }
+  
+  const user = db.prepare('SELECT id, name, email, isAdmin, createdAt FROM users WHERE id = ?').get(userId);
+  res.json(user);
+});
+
+// @POST /api/users/wishlist/:productId (simplified - no wishlist table yet)
+export const toggleWishlist = asyncHandler(async (req, res) => {
+  res.json({ wishlist: [], added: true });
+});
+
+// @POST /api/users/cart (simplified - no cart table yet)
+export const updateCart = asyncHandler(async (req, res) => {
+  res.json([]);
+});import asyncHandler from 'express-async-handler';
+import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 
 const generateToken = (id) => jwt.sign({ id }, process.env.JWT_SECRET || 'shopverse_secret_2024', { expiresIn: '7d' });

@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import mongoose from 'mongoose';
+import db, { seedDatabase } from './db.js';
 import productRoutes from './routes/productRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import orderRoutes from './routes/orderRoutes.js';
@@ -37,6 +37,9 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Make db available to routes
+app.set('db', db);
+
 // Routes
 app.use('/api/products', productRoutes);
 app.use('/api/users', userRoutes);
@@ -54,13 +57,9 @@ io.on('connection', (socket) => {
   });
 });
 
-// MongoDB + start
+// Start server
 const PORT = process.env.PORT || 5000;
-mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/shopverse')
-  .then(() => {
-    console.log('✅ MongoDB connected');
-    httpServer.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-  })
-  .catch(err => console.error('MongoDB error:', err));
+seedDatabase();
+httpServer.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
 export { io };

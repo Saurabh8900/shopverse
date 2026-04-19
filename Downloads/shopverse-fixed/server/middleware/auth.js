@@ -1,7 +1,6 @@
 import jwt from 'jsonwebtoken';
-import User from '../models/User.js';
 
-export const protect = async (req, res, next) => {
+export const protect = (req, res, next) => {
   let token = req.headers.authorization?.startsWith('Bearer')
     ? req.headers.authorization.split(' ')[1]
     : null;
@@ -10,8 +9,7 @@ export const protect = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'shopverse_secret_2024');
-    req.user = await User.findById(decoded.id).select('-password');
-    if (!req.user) return res.status(401).json({ message: 'User not found' });
+    req.user = { id: decoded.id };
     next();
   } catch {
     res.status(401).json({ message: 'Token invalid or expired' });
@@ -19,11 +17,16 @@ export const protect = async (req, res, next) => {
 };
 
 export const admin = (req, res, next) => {
-  if (req.user?.role === 'admin') return next();
+  const db = req.app.get('db');
+  const user = db.prepare('SELECT isAdmin FROM users WHERE id = ?').get(req.user.id);
+  if (user?.isAdmin === 1) return next();
   res.status(403).json({ message: 'Admin access only' });
 };
 
 export const seller = (req, res, next) => {
-  if (req.user?.role === 'seller' || req.user?.role === 'admin') return next();
+  // For simplicity, sellers are also admins in this version
+  const db = req.app.get('db');
+  const user = db.prepare('SELECT isAdmin FROM users WHERE id = ?').get(req.user.id);
+  if (user?.isAdmin === 1) return next();
   res.status(403).json({ message: 'Seller access only' });
 };

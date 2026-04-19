@@ -1,4 +1,211 @@
 import asyncHandler from 'express-async-handler';
+
+// @GET /api/products
+export const getProducts = asyncHandler(async (req, res) => {
+  const db = req.app.get('db');
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 20;
+  const offset = (page - 1) * limit;
+
+  let query = '1=1';
+  const params = [];
+
+  // Category filter
+  if (req.query.category) {
+    const slug = req.query.category.toLowerCase().replace(/\s+/g, '-');
+    const cat = db.prepare('SELECT id FROM categories WHERE slug = ?').get(slug);
+    if (cat) {
+      query += ' AND categoryId = ?';
+      params.push(cat.id);
+    }
+  }
+
+  // Price filter
+  if (req.query.minPrice) {
+    query += ' AND price >= ?';
+    params.push(Number(req.query.minPrice));
+  }
+  if (req.query.maxPrice) {
+    query += ' AND price <= ?';
+    params.push(Number(req.query.maxPrice));
+  }
+
+  // Price drop filter
+  if (req.query.priceDrop === 'true') {
+    query += ' AND priceDrop = 1 AND price < originalPrice';
+  }
+
+  // Search
+  if (req.query.search) {
+    query += ' AND (name LIKE ? OR description LIKE ?)';
+    const searchTerm = `%${req.query.search}%`;
+    params.push(searchTerm, searchTerm);
+  }
+
+  // Sort
+  let orderBy = 'createdAt DESC';
+  if (req.query.sort === 'price_asc') orderBy = 'price ASC';
+  if (req.query.sort === 'price_desc') orderBy = 'price DESC';
+  if (req.query.sort === 'newest') orderBy = 'createdAt DESC';
+
+  // Get total count
+  const total = db.prepare(`SELECT COUNT(*) as count FROM products WHERE ${query}`).get(...params);
+
+  // Get products
+  const products = db.prepare(`
+    SELECT p.*, c.name as categoryName, c.slug as categorySlug
+    FROM products p
+    LEFT JOIN categories c ON p.categoryId = c.id
+    WHERE ${query}
+    ORDER BY ${orderBy}
+    LIMIT ? OFFSET ?
+  `).all(...params, limit, offset);
+
+  res.json({
+    products: products.map(p => ({
+      _id: p.id,
+      name: p.name,
+      slug: p.slug,
+      description: p.description,
+      price: p.price,
+      originalPrice: p.originalPrice,
+      image: p.image,
+      images: p.images ? JSON.parse(p.images) : [],
+      category: p.categoryId ? { _id: p.categoryId, name: p.categoryName, slug: p.categorySlug } : null,
+      countInStock: p.countInStock,
+      priceDrop: p.priceDrop === 1,
+      priceDropEnds: p.priceDropEnds,
+      createdAt: p.createdAt
+    })),
+    page,
+    pages: Math.ceil(total.count / limit),
+    total: total.count
+  });
+});
+
+// @GET /api/products/:id
+export const getProductById = asyncHandler(async (req, res) => {
+  const db = req.app.get('db');
+  const product = db.prepare(`
+    SELECT p.*, c.name as categoryName, c.slug as categorySlug
+    FROM products p
+    LEFT JOIN categories c ON p.categoryId = c.id
+    WHERE p.id = ?
+  `).get(req.params.id);
+
+  if (!product) return res.status(404).json({ message: 'Product not found' });
+
+  res.json({
+    _id: product.id,
+    name: product.name,
+    slug: product.slug,
+    description: product.description,
+    price: product.price,
+    originalPrice: product.originalPrice,
+    image: product.image,
+    images: product.images ? JSON.parse(product.images) : [],
+    category: product.categoryId ? { _id: product.categoryId, name: product.categoryName, slug: product.categorySlug } : null,
+    countInStock: product.countInStock,
+    priceDrop: product.priceDrop === 1,
+    priceDropEnds: product.priceDropEnds,
+    reviews: [],
+    createdAt: product.createdAt
+  });
+});
+
+// @GET /api/products/featured
+export const getFeaturedProducts = asyncHandler(async (req, res) => {
+  const db = req.app.get('db');
+  const products = db.prepare(`
+    SELECT p.*, c.name as categoryName, c.slug as categorySlug
+    FROM products p
+    LEFT JOIN categories c ON p.categoryId = c.id
+    ORDER BY p.createdAt DESC
+    LIMIT 12
+  `).all();
+
+  res.json(products.map(p => ({
+    _id: p.id,
+    name: p.name,
+    slug: p.slug,
+    description: p.description,
+    price: p.price,
+    originalPrice: p.originalPrice,
+    image: p.image,
+    category: p.categoryId ? { _id: p.categoryId, name: p.categoryName, slug: p.categorySlug } : null,
+    countInStock: p.countInStock,
+    priceDrop: p.priceDrop === 1,
+    priceDropEnds: p.priceDropEnds
+  })));
+});
+
+// @GET /api/products/flash-sale
+export const getFlashSaleProducts = asyncHandler(async (req, res) => {
+  const db = req.app.get('db');
+  const products = db.prepare(`
+    SELECT p.*, c.name as categoryName, c.slug as categorySlug
+    FROM products p
+    LEFT JOIN categories c ON p.categoryId = c.id
+    WHERE p.priceDrop = 1 AND p.price < p.originalPrice
+    ORDER BY p.createdAt DESC
+    LIMIT 8
+  `).all();
+
+  res.json(products.map(p => ({
+    _id: p.id,
+    name: p.name,
+    slug: p.slug,
+    description: p.description,
+    price: p.price,
+    originalPrice: p.originalPrice,
+    image: p.image,
+    category: p.categoryId ? { _id: p.categoryId, name: p.categoryName, slug: p.categorySlug } : null,
+    countInStock: p.countInStock,
+    priceDrop: true,
+    priceDropEnds: p.priceDropEnds
+  })));
+});
+
+// @POST /api/products/:id/reviews
+export const addReview = asyncHandler(async (req, res) => {
+  res.status(201).json({ message: 'Review added' });
+});
+
+// @POST /api/products (admin/seller)
+export const createProduct = asyncHandler(async (req, res) => {
+  const db = req.app.get('db');
+  const { name, slug, description, price, originalPrice, image, categoryId, countInStock } = req.body;
+  
+  const result = db.prepare(`
+    INSERT INTO products (name, slug, description, price, originalPrice, image, categoryId, countInStock)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(name, slug, description, price, originalPrice, image, categoryId, countInStock);
+
+  res.status(201).json({ id: result.lastInsertRowid, ...req.body });
+});
+
+// @PUT /api/products/:id
+export const updateProduct = asyncHandler(async (req, res) => {
+  const db = req.app.get('db');
+  const fields = Object.keys(req.body).map(k => `${k} = ?`).join(', ');
+  const values = Object.values(req.body);
+  
+  db.prepare(`UPDATE products SET ${fields} WHERE id = ?`).run(...values, req.params.id);
+  
+  const product = db.prepare('SELECT * FROM products WHERE id = ?').get(req.params.id);
+  res.json(product);
+});
+
+// @DELETE /api/products/:id
+export const deleteProduct = asyncHandler(async (req, res) => {
+  const db = req.app.get('db');
+  db.prepare('DELETE FROM products WHERE id = ?').run(req.params.id);
+  res.json({ message: 'Product deleted' });
+});
+
+export const seedProducts = asyncHandler(async (req, res) => {
+  res.json({ message: 'Use db.js seed function instead' });
+});import asyncHandler from 'express-async-handler';
 import Product from '../models/Product.js';
 
 // @GET /api/products
